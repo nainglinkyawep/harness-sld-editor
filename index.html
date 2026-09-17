@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="my">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Harness Engineering – SLD Editor</title>
+<style>
+:root{
+  --navy:#0b3d66; --teal:#0d9488; --ink:#0f2740; --muted:#5b6b7c;
+  --paper:#f4f7fb; --line:#d7e0ea; --white:#fff; --warn:#b45309;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;font-family:Inter,system-ui,Segoe UI,sans-serif;background:var(--paper);color:var(--ink)}
+.app{display:grid;grid-template-rows:56px 1fr 28px;height:100%}
+.top{display:flex;align-items:center;gap:12px;padding:0 14px;background:var(--navy);color:#fff}
+.brand{font-weight:700;letter-spacing:.02em;white-space:nowrap}
+.brand small{display:block;font-weight:500;opacity:.75;font-size:11px}
+.top button,.side button,.props button{
+  border:0;background:#14507f;color:#fff;border-radius:8px;padding:7px 10px;cursor:pointer;font-weight:600
+}
+.top button:hover,.side button:hover{background:#17639c}
+.top .ghost{background:transparent;border:1px solid #3d6a8f}
+.main{display:grid;grid-template-columns:230px 1fr 260px;min-height:0}
+.side,.props{background:#fff;border-right:1px solid var(--line);overflow:auto;padding:12px}
+.props{border-right:0;border-left:1px solid var(--line)}
+h3{margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+.cat{margin:0 0 14px}
+.sym{display:flex;align-items:center;gap:8px;padding:7px 8px;border:1px solid var(--line);border-radius:8px;margin:0 0 6px;cursor:grab;background:#fbfdff}
+.sym:hover{border-color:var(--teal)}
+.sym svg{width:34px;height:22px}
+.canvas-wrap{position:relative;overflow:hidden;background:
+  linear-gradient(#e8eef4 1px,transparent 1px),
+  linear-gradient(90deg,#e8eef4 1px,transparent 1px);
+  background-size:24px 24px;background-color:#eef3f8}
+svg.stage{width:100%;height:100%;display:block;touch-action:none}
+.hint{position:absolute;left:12px;bottom:10px;background:#fff;border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-size:12px;color:var(--muted)}
+label{display:block;font-size:12px;color:var(--muted);margin:8px 0 4px}
+input,select,textarea{width:100%;padding:8px;border:1px solid var(--line);border-radius:8px;font:inherit}
+.foot{display:flex;align-items:center;justify-content:space-between;padding:0 12px;font-size:12px;color:#d7e6f3;background:var(--navy)}
+.el{cursor:move}
+.el.sel .box{stroke:var(--teal);stroke-width:2.2}
+.pin{fill:#fff;stroke:var(--navy);stroke-width:1.4}
+.pin.hot{fill:var(--teal)}
+.wire{fill:none;stroke:#1f3b57;stroke-width:2}
+.titleblk text{fill:#0b3d66}
+@media(max-width:900px){.main{grid-template-columns:1fr}.side,.props{display:none}}
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <div class="brand">Harness Engineering<small>Electrical & Solar SLD Editor</small></div>
+    <button onclick="newDoc()">New</button>
+    <button onclick="loadTemplate('rooftop')">Rooftop PV</button>
+    <button onclick="loadTemplate('hybrid')">Hybrid + Battery</button>
+    <button class="ghost" onclick="exportJSON()">Save JSON</button>
+    <button class="ghost" onclick="document.getElementById('file').click()">Open</button>
+    <input id="file" type="file" accept="application/json" hidden onchange="openJSON(event)">
+    <button class="ghost" onclick="exportSVG()">Export SVG</button>
+    <button class="ghost" onclick="exportPNG()">Export PNG</button>
+    <button class="ghost" onclick="window.print()">Print</button>
+  </header>
+  <div class="main">
+    <aside class="side">
+      <h3>Symbols</h3>
+      <div id="palette"></div>
+    </aside>
+    <div class="canvas-wrap" id="wrap">
+      <svg class="stage" id="stage"></svg>
+      <div class="hint">ဆွဲထည့ → pin နှစ်ခုနှိပ်ပို့ ချိတ် → Delete ဖြင့် ဖျက် · drag ဖြင့် ရွှဲ</div>
+    </div>
+    <aside class="props">
+      <h3>Project</h3>
+      <label>Title</label><input id="ptitle" oninput="meta.title=this.value;draw()">
+      <label>Site / Client</label><input id="psite" oninput="meta.site=this.value;draw()">
+      <label>Drawn by</label><input id="pby" oninput="meta.by=this.value;draw()">
+      <h3 style="margin-top:18px">Selected</h3>
+      <div id="selbox"><p style="color:var(--muted);font-size:13px">ပစ္စစ်တစ်တစ်ခုနီးရွဲ့</p></div>
+    </aside>
+  </div>
+  <footer class="foot"><span id="stat">Ready</span><span>localStorage auto-save · Harness Engineering</span></footer>
+</div>
+<script>
+const LIB = [
+  {id:'pv', name:'PV Array', group:'Solar', pins:[{id:'dc',x:40,y:22}]},
+  {id:'combiner', name:'Combiner', group:'Solar', pins:[{id:'in',x:0,y:16},{id:'out',x:40,y:16}]},
+  {id:'dciso', name:'DC Isolator', group:'Solar', pins:[{id:'a',x:0,y:16},{id:'b',x:40,y:16}]},
+  {id:'spd', name:'SPD', group:'Solar', pins:[{id:'t',x:20,y:0}]},
+  {id:'inverter', name:'Inverter', group:'Solar', pins:[{id:'dc',x:0,y:18},{id:'ac',x:56,y:18},{id:'bat',x:28,y:36}]},
+  {id:'battery', name:'Battery', group:'Solar', pins:[{id:'dc',x:20,y:0}]},
+  {id:'aciso', name:'AC Isolator', group:'AC', pins:[{id:'a',x:0,y:16},{id:'b',x:40,y:16}]},
+  {id:'breaker', name:'MCB / Breaker', group:'AC', pins:[{id:'a',x:0,y:16},{id:'b',x:40,y:16}]},
+  {id:'rcd', name:'RCD / RCCB', group:'AC', pins:[{id:'a',x:0,y:16},{id:'b',x:40,y:16}]},
+  {id:'fuse', name:'Fuse', group:'AC', pins:[{id:'a',x:0,y:16},{id:'b',x:40,y:16}]},
+  {id:'meter', name:'Energy Meter', group:'AC', pins:[{id:'a',x:0,y:18},{id:'b',x:40,y:18}]},
+  {id:'bus', name:'Busbar', group:'AC', pins:[{id:'tap',x:60,y:8}], w:120,h:16},
+  {id:'grid', name:'Utility Grid', group:'Source', pins:[{id:'t',x:20,y:36}]},
+  {id:'gen', name:'Generator', group:'Source', pins:[{id:'t',x:20,y:40}]},
+  {id:'xfmr', name:'Transformer', group:'Source', pins:[{id:'hv',x:0,y:20},{id:'lv',x:44,y:20}]},
+  {id:'motor', name:'Motor', group:'Load', pins:[{id:'t',x:20,y:0}]},
+  {id:'load', name:'Load', group:'Load', pins:[{id:'t',x:20,y:0}]},
+  {id:'earth', name:'Earth', group:'Load', pins:[{id:'t',x:16,y:0}]},
+  {id:'note', name:'Text note', group:'Anno', pins:[]}
+];
+const W = {pv:80,combiner:40,dciso:40,spd:40,inverter:56,battery:40,aciso:40,breaker:40,rcd:40,fuse:40,meter:40,bus:120,grid:40,gen:40,xfmr:44,motor:40,load:40,earth:32,note:80};
+const H = {pv:44,combiner:32,dciso:32,spd:32,inverter:36,battery:36,aciso:32,breaker:32,rcd:32,fuse:32,meter:36,bus:16,grid:36,gen:40,xfmr:40,motor:40,load:36,earth:28,note:24};
+
+let meta = {title:'Solar PV Single Line Diagram', site:'', by:'Harness Engineering'};
+let nodes = [];
+let wires = [];
+let sel = null, mode='select', pending=null, drag=null, pan={x:40,y:40,s:1,ox:0,oy:0};
+const STAGE = () => document.getElementById('stage');
+
+function uid(p){return p+Math.random().toString(36).slice(2,8)}
+function lib(id){return LIB.find(x=>x.id===id)}
+
+function glyph(kind,x,y){
+  const g = {pv:`<rect x="4" y="4" width="72" height="28" rx="3"/><path d="M16 8l8 20M32 8l8 20M48 8l8 20M64 8l8 20"/><text x="40" y="22" text-anchor="middle" font-size="8">PV</text>`,
+    combiner:`<rect x="4" y="4" width="32" height="24" rx="2"/><path d="M8 10h24M8 16h24M8 22h24"/>`,
+    dciso:`<path d="M4 16h10M26 16h10"/><circle cx="16" cy="16" r="4"/><circle cx="24" cy="16" r="4"/>`,
+    spd:`<path d="M20 4v8l-6 6 12 2-6 8"/><text x="20" y="30" text-anchor="middle" font-size="7">SPD</text>`,
+    inverter:`<rect x="4" y="4" width="48" height="28" rx="2"/><path d="M10 24c6-16 10 0 16-16 6 16 10 0 16-16" fill="none"/><text x="28" y="30" text-anchor="middle" font-size="7">INV</text>`,
+    battery:`<rect x="8" y="10" width="24" height="18"/><path d="M14 10V6h4v4M22 10V6h4v4"/>`,
+    aciso:`<path d="M4 16h10l18-8"/><circle cx="14" cy="16" r="3"/>`,
+    breaker:`<path d="M4 16h10M26 16h10"/><path d="M14 16l12-8"/>`,
+    rcd:`<path d="M4 16h32"/><circle cx="20" cy="16" r="7"/><text x="20" y="19" text-anchor="middle" font-size="7">RCD</text>`,
+    fuse:`<rect x="10" y="10" width="20" height="12" rx="6"/><path d="M4 16h6M30 16h6"/>`,
+    meter:`<rect x="4" y="4" width="32" height="28" rx="2"/><circle cx="20" cy="18" r="8"/><text x="20" y="21" text-anchor="middle" font-size="7">kWh</text>`,
+    bus:`<rect x="0" y="4" width="120" height="8" rx="2" fill="#0b3d66" stroke="none"/>`,
+    grid:`<path d="M8 8h24M8 16h24M8 24h24M12 8v16M20 8v16M28 8v16"/>`,
+    gen:`<circle cx="20" cy="20" r="14"/><text x="20" y="24" text-anchor="middle" font-size="10">G</text>`,
+    xfmr:`<circle cx="16" cy="20" r="10"/><circle cx="28" cy="20" r="10"/>`,
+    motor:`<circle cx="20" cy="20" r="14"/><text x="20" y="24" text-anchor="middle" font-size="10">M</text>`,
+    load:`<path d="M8 8h24v20H8z"/><path d="M12 28l8-16 8 16"/>`,
+    earth:`<path d="M16 2v10M6 12h20M9 16h14M12 20h8"/>`,
+    note:`<text x="0" y="14" font-size="12" fill="#0b3d66">Note</text>`
+  };
+  return `<g transform="translate(${x},${y})" fill="none" stroke="#0b3d66" stroke-width="1.6">${g[kind]||''}</g>`;
+}
+
+function renderPalette(){
+  const groups = [...new Set(LIB.map(s=>s.group))];
+  document.getElementById('palette').innerHTML = groups.map(g=>`<div class="cat"><strong>${g}</strong>${LIB.filter(s=>s.group===g).map(s=>`<div class="sym" draggable="true" ondragstart="dragType='${s.id}'"><svg viewBox="0 0 ${W[s.id]} ${H[s.id]}">${glyph(s.id,0,0)}</svg><span>${s.name}</span></div>`).join('')}</div>`).join('');
+}
+let dragType=null;
+
+function pinPos(n,p){
+  const def = lib(n.kind).pins.find(x=>x.id===p) || {x:W[n.kind]/2,y:H[n.kind]/2};
+  return {x:n.x+def.x, y:n.y+def.y};
+}
+function ortho(a,b){
+  const mx=(a.x+b.x)/2;
+  return `M${a.x} ${a.y} L${mx} ${a.y} L${mx} ${b.y} L${b.x} ${b.y}`;
+}
+
+function draw(){
+  const svg = STAGE();
+  const title = `<g class="titleblk">
+    <rect x="24" y="16" width="420" height="54" fill="#fff" stroke="#0b3d66"/>
+    <text x="36" y="36" font-size="16" font-weight="700">${esc(meta.title||'SLD')}</text>
+    <text x="36" y="54" font-size="11">${esc(meta.site||'Site')}  ·  ${esc(meta.by||'')}</text>
+  </g>`;
+  const ns = nodes.map(n=>{
+    const pins = lib(n.kind).pins.map(p=>`<circle class="pin" data-n="${n.id}" data-p="${p.id}" cx="${n.x+p.x}" cy="${n.y+p.y}" r="4"/>`).join('');
+    const lab = `<text x="${n.x}" y="${n.y-6}" font-size="11" fill="#0b3d66">${esc(n.name||n.kind)}</text>`;
+    const sub = n.rating?`<text x="${n.x}" y="${n.y+H[n.kind]+14}" font-size="10" fill="#5b6b7c">${esc(n.rating)}</text>`:'';
+    return `<g class="el ${sel===n.id?'sel':''}" data-id="${n.id}"><rect class="box" x="${n.x-4}" y="${n.y-4}" width="${(n.w||W[n.kind])+8}" height="${H[n.kind]+8}" fill="transparent" stroke="transparent"/>${glyph(n.kind,n.x,n.y)}${lab}${sub}${pins}</g>`;
+  }).join('');
+  const ws = wires.map(w=>{
+    const a=nodes.find(n=>n.id===w.a), b=nodes.find(n=>n.id===w.b);
+    if(!a||!b) return '';
+    return `<path class="wire" d="${ortho(pinPos(a,w.ap),pinPos(b,w.bp))}"/>`;
+  }).join('');
+  svg.innerHTML = `<g id="world" transform="translate(${pan.x},${pan.y}) scale(${pan.s})">${title}${ws}${ns}</g>`;
+  bindSvg();
+  save();
+  document.getElementById('stat').textContent = `${nodes.length} devices · ${wires.length} connections`;
+  document.getElementById('ptitle').value=meta.title||'';
+  document.getElementById('psite').value=meta.site||'';
+  document.getElementById('pby').value=meta.by||'';
+}
+function esc(s){return String(s||'').replace(/[&<>"]/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+
+function bindSvg(){
+  STAGE().querySelectorAll('.el').forEach(g=>{
+    g.addEventListener('mousedown', e=>{
+      if(e.target.classList.contains('pin')) return;
+      sel=g.dataset.id; showSel();
+      const n=nodes.find(x=>x.id===sel);
+      drag={n, x:e.clientX, y:e.clientY, ox:n.x, oy:n.y};
+      e.stopPropagation();
+    });
+  });
+  STAGE().querySelectorAll('.pin').forEach(p=>{
+    p.addEventListener('mousedown', e=>{
+      e.stopPropagation();
+      const ref={n:p.dataset.n,p:p.dataset.p};
+      if(!pending){pending=ref;p.classList.add('hot');}
+      else if(pending.n!==ref.n){
+        wires.push({a:pending.n,ap:pending.p,b:ref.n,bp:ref.p});
+        pending=null; draw();
+      } else pending=null;
+    });
+  });
+}
+
+const wrap=document.getElementById('wrap');
+wrap.addEventListener('dragover',e=>e.preventDefault());
+wrap.addEventListener('drop',e=>{
+  e.preventDefault();
+  if(!dragType) return;
+  const r=wrap.getBoundingClientRect();
+  const x=Math.round((e.clientX-r.left-pan.x)/pan.s/8)*8;
+  const y=Math.round((e.clientY-r.top-pan.y)/pan.s/8)*8;
+  const n={id:uid(dragType[0]),kind:dragType,name:lib(dragType).name,x,y,rating:''};
+  if(dragType==='bus') n.w=120;
+  nodes.push(n); sel=n.id; dragType=null; draw(); showSel();
+});
+wrap.addEventListener('mousemove',e=>{
+  if(!drag) return;
+  const dx=(e.clientX-drag.x)/pan.s, dy=(e.clientY-drag.y)/pan.s;
+  drag.n.x=Math.round((drag.ox+dx)/8)*8;
+  drag.n.y=Math.round((drag.oy+dy)/8)*8;
+  draw();
+});
+window.addEventListener('mouseup',()=>drag=null);
+wrap.addEventListener('wheel',e=>{
+  e.preventDefault();
+  const f=e.deltaY<0?1.08:0.92;
+  pan.s=Math.min(2.4,Math.max(.35,pan.s*f));
+  draw();
+},{passive:false});
+window.addEventListener('keydown',e=>{
+  if((e.key==='Delete'||e.key==='Backspace') && sel && document.activeElement.tagName!=='INPUT'){
+    wires=wires.filter(w=>w.a!==sel&&w.b!==sel);
+    nodes=nodes.filter(n=>n.id!==sel); sel=null; draw(); showSel();
+  }
+});
+
+function showSel(){
+  const box=document.getElementById('selbox');
+  const n=nodes.find(x=>x.id===sel);
+  if(!n){box.innerHTML='<p style="color:var(--muted);font-size:13px">ပစ္စစ်တစ်တစ်ခုနီးရွဲ့</p>';return;}
+  box.innerHTML=`<label>Name</label><input value="${esc(n.name)}" oninput="upd('${n.id}','name',this.value)">
+  <label>Rating / notes</label><input value="${esc(n.rating)}" oninput="upd('${n.id}','rating',this.value)">
+  <p style="font-size:12px;color:var(--muted)">${n.kind} · ${n.id}</p>
+  <button onclick="delSel()">Delete</button>`;
+}
+function upd(id,k,v){const n=nodes.find(x=>x.id===id); if(n){n[k]=v;draw();}}
+function delSel(){if(!sel)return; wires=wires.filter(w=>w.a!==sel&&w.b!==sel); nodes=nodes.filter(n=>n.id!==sel); sel=null; draw(); showSel();}
+
+function newDoc(){nodes=[];wires=[];sel=null;meta={title:'Solar PV Single Line Diagram',site:'',by:'Harness Engineering'};draw();showSel();}
+function payload(){return {v:1,meta,nodes,wires}}
+function save(){try{localStorage.setItem('he-sld',JSON.stringify(payload()))}catch(e){}}
+function restore(){try{const d=JSON.parse(localStorage.getItem('he-sld')||'null'); if(d){meta=d.meta||meta;nodes=d.nodes||[];wires=d.wires||[];}}catch(e){}}
+function exportJSON(){
+  const blob=new Blob([JSON.stringify(payload(),null,2)],{type:'application/json'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=(meta.title||'sld')+'.json'; a.click();
+}
+function openJSON(e){
+  const f=e.target.files[0]; if(!f)return;
+  const r=new FileReader(); r.onload=()=>{const d=JSON.parse(r.result); meta=d.meta||meta; nodes=d.nodes||[]; wires=d.wires||[]; draw();}; r.readAsText(f);
+}
+function exportSVG(){
+  const s=STAGE().outerHTML;
+  const blob=new Blob([`<?xml version="1.0"?>`+s],{type:'image/svg+xml'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='sld.svg'; a.click();
+}
+function exportPNG(){
+  const xml=new XMLSerializer().serializeToString(STAGE());
+  const img=new Image();
+  img.onload=()=>{const c=document.createElement('canvas'); c.width=1600;c.height=1000;const ctx=c.getContext('2d');ctx.fillStyle='#eef3f8';ctx.fillRect(0,0,1600,1000);ctx.drawImage(img,0,0,1600,1000);const a=document.createElement('a');a.href=c.toDataURL('image/png');a.download='sld.png';a.click();};
+  img.src='data:image/svg+xml;base64,'+btoa(unescape(encodeURIComponent(xml)));
+}
+
+function loadTemplate(t){
+  if(t==='rooftop'){
+    meta={title:'Rooftop PV Single Line Diagram',site:'Residential rooftop',by:'Harness Engineering'};
+    nodes=[
+      {id:'pv1',kind:'pv',name:'PV Array 12 x 550W',rating:'6.6 kWp / Voc string',x:80,y:120},
+      {id:'cb1',kind:'combiner',name:'Combiner',rating:'4 strings',x:200,y:128},
+      {id:'dc1',kind:'dciso',name:'DC Isolator',rating:'1000V DC',x:280,y:128},
+      {id:'inv1',kind:'inverter',name:'String Inverter 5kW',rating:'230V AC',x:360,y:124},
+      {id:'ac1',kind:'aciso',name:'AC Isolator',rating:'32A',x:460,y:128},
+      {id:'mcb1',kind:'breaker',name:'MCB',rating:'32A C-curve',x:540,y:128},
+      {id:'m1',kind:'meter',name:'Bi-directional meter',rating:'kWh',x:620,y:124},
+      {id:'g1',kind:'grid',name:'Utility grid',rating:'230/400V',x:700,y:120},
+      {id:'e1',kind:'earth',name:'Earth',rating:'PE',x:360,y:210}
+    ];
+    wires=[
+      {a:'pv1',ap:'dc',b:'cb1',bp:'in'},{a:'cb1',ap:'out',b:'dc1',bp:'a'},
+      {a:'dc1',ap:'b',b:'inv1',bp:'dc'},{a:'inv1',ap:'ac',b:'ac1',bp:'a'},
+      {a:'ac1',ap:'b',b:'mcb1',bp:'a'},{a:'mcb1',ap:'b',b:'m1',bp:'a'},
+      {a:'m1',ap:'b',b:'g1',bp:'t'}
+    ];
+  } else {
+    meta={title:'Hybrid PV + Battery SLD',site:'',by:'Harness Engineering'};
+    nodes=[
+      {id:'pv1',kind:'pv',name:'PV Array',rating:'8 kWp',x:80,y:80},
+      {id:'dc1',kind:'dciso',name:'DC Isolator',x:220,y:88},
+      {id:'inv1',kind:'inverter',name:'Hybrid Inverter',rating:'5kW / 48V',x:320,y:84},
+      {id:'bat1',kind:'battery',name:'LiFePO4 Battery',rating:'10 kWh',x:336,y:180},
+      {id:'ac1',kind:'aciso',name:'AC Isolator',x:430,y:88},
+      {id:'rcd1',kind:'rcd',name:'RCD',rating:'30mA',x:510,y:88},
+      {id:'mcb1',kind:'breaker',name:'Main MCB',x:590,y:88},
+      {id:'bus1',kind:'bus',name:'AC Bus',x:670,y:96},
+      {id:'ld1',kind:'load',name:'Essential loads',x:700,y:160},
+      {id:'g1',kind:'grid',name:'Grid',x:820,y:80},
+      {id:'e1',kind:'earth',name:'Earth',x:336,y:250}
+    ];
+    wires=[
+      {a:'pv1',ap:'dc',b:'dc1',bp:'a'},{a:'dc1',ap:'b',b:'inv1',bp:'dc'},
+      {a:'inv1',ap:'bat',b:'bat1',bp:'dc'},{a:'inv1',ap:'ac',b:'ac1',bp:'a'},
+      {a:'ac1',ap:'b',b:'rcd1',bp:'a'},{a:'rcd1',ap:'b',b:'mcb1',bp:'a'},
+      {a:'mcb1',ap:'b',b:'bus1',bp:'tap'},{a:'bus1',ap:'tap',b:'ld1',bp:'t'},
+      {a:'bus1',ap:'tap',b:'g1',bp:'t'}
+    ];
+  }
+  sel=null; draw(); showSel();
+}
+
+renderPalette();
+restore();
+if(!nodes.length) loadTemplate('rooftop');
+else draw();
+</script>
+</body>
+</html>
